@@ -15,7 +15,7 @@ import {HookTest} from "./utils/HookTest.sol";
 import {Counter} from "../src/Counter.sol";
 import {HookMiner} from "./utils/HookMiner.sol";
 
-contract CounterTest is HookTest, Deployers, GasSnapshot {
+contract CounterTest is HookTest, Deployers {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
@@ -60,13 +60,19 @@ contract CounterTest is HookTest, Deployers, GasSnapshot {
         assertEq(counter.beforeSwapCount(poolId), 0);
         assertEq(counter.afterSwapCount(poolId), 0);
 
+        (, int24 currentTick, , ) = IPoolManager(address(manager)).getSlot0(poolKey.toId());
+
         // Perform a test swap //
-        int256 amount = 100;
+        int256 amount = 2 ether;
         bool zeroForOne = true;
+        //console.log(token0.balanceOf(address(this)));
         swap(poolKey, amount, zeroForOne, ZERO_BYTES);
         // ------------------- //
-
+        console.log(token0.balanceOf(address(this)));
         assertEq(counter.beforeSwapCount(poolId), 1);
         assertEq(counter.afterSwapCount(poolId), 1);
+
+        (, currentTick, , ) = IPoolManager(address(manager)).getSlot0(poolKey.toId());
+        console2.log(currentTick);
     }
 }

@@ -36,8 +36,8 @@ contract StopLossHookTest is HookTest, Deployers {
             Hooks.AFTER_INITIALIZE_FLAG | Hooks.AFTER_SWAP_FLAG
         );
         (address hookAddress, bytes32 salt) =
-            HookMiner.find(address(this), flags, 0, type(StopLossHook).creationCode, abi.encode(address(manager),""));
-        stopLossHook = new StopLossHook{salt: salt}(IPoolManager(address(manager)), "");
+            HookMiner.find(address(this), flags, 0, type(StopLossHook).creationCode, abi.encode(address(manager),"", 100));
+        stopLossHook = new StopLossHook{salt: salt}(IPoolManager(address(manager)), "", 100);
         require(address(stopLossHook) == hookAddress, "StopLossHookTest: hook address mismatch");
 
         // Create the pool

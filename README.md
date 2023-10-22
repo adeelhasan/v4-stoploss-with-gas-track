@@ -15,6 +15,70 @@ Eth deposits can be added or removed at any time, however the condition is that 
 
 ### Main Test
 
+```
+    function testStopLossWithTwoUsers() public {
+        int24 tick = -300;
+        uint256 positionAmount =  0.1 ether;
+        bool zeroForOne = false;
+
+
+        //open a stop loss order should price cross a boundary
+        vm.startPrank(user1);
+        token1.approve(address(stopLossHook), positionAmount);
+
+
+        uint256 tokenIdAtPosition = stopLossHook.getTokenId(poolKey, tick, zeroForOne);
+        stopLossHook.placeOrder{value: 1 ether}(poolKey, tick, positionAmount, zeroForOne);
+        assertEq(positionAmount, stopLossHook.balanceOf(user1, tokenIdAtPosition));
+        assertEq(stopLossHook.getGasBalancesAmount(user1), 1 ether);
+        vm.stopPrank();
+
+
+        //a different user executes the swap
+        vm.startPrank(user2);
+
+
+        // Approve for swapping
+        uint256 swapAmount = 1 ether;
+        token0.approve(address(swapRouter), swapAmount);
+        token1.approve(address(swapRouter), swapAmount);
+
+
+        //set gas price, the default in foundry is 0
+        vm.txGasPrice(1);
+
+
+        uint256 user1GasBalanceBefore = stopLossHook.getGasBalancesAmount(user1);
+        uint256 user2GasBalanceBefore = stopLossHook.getGasBalancesAmount(user2);
+
+
+        //pass the swap executor address into hookData so that it is available downstream
+        bytes memory hookData = abi.encodePacked(user2);
+        swap(poolKey, 1 ether, !zeroForOne, hookData);
+
+
+        vm.stopPrank();
+
+
+        //check that the stop loss order was filled as expected
+        int256 tokensLeftToSell = stopLossHook.stopLossPositions(poolId, tick, zeroForOne);
+        assertEq(tokensLeftToSell, 0);
+
+
+        //check if user1's deposit was used to pay for the hook execution
+        //the deposit was sent in when the position was opened
+        uint256 user1GasBalanceAfter = stopLossHook.getGasBalancesAmount(user1);
+        uint256 user2GasBalanceAfter = stopLossHook.getGasBalancesAmount(user2);
+
+
+        //user1 should have lost some balance to pay for the execution of the stopLoss swap
+        assertGt(user1GasBalanceBefore, user1GasBalanceAfter);
+        //user2 should have gained balance since they executed the swap
+        assertGt(user2GasBalanceAfter, user2GasBalanceBefore);
+
+
+    }
+```
 
 ### Future Work
 - trailing stop loss -- the stop position could move up into higher tick ranges and maintain a tick distance of a threshold

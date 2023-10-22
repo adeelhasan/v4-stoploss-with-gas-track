@@ -73,9 +73,9 @@ contract StopLossHookTest is HookTest, Deployers {
 
         int24 positionTickUpper;
         vm.expectRevert("no deposit");
-        positionTickUpper = stopLossHook.placeOrder(poolKey, tick, amount, zeroForOne);
+        positionTickUpper = stopLossHook.placeOrder(poolKey, tick, amount, zeroForOne, false, 0);
 
-        positionTickUpper = stopLossHook.placeOrder{value: 1 ether}(poolKey, tick, amount, zeroForOne);
+        positionTickUpper = stopLossHook.placeOrder{value: 1 ether}(poolKey, tick, amount, zeroForOne, false, 0);
         uint256 newBalance = token0.balanceOf(address(this));
 
         assertEq(positionTickUpper, 120);
@@ -99,7 +99,7 @@ contract StopLossHookTest is HookTest, Deployers {
         token1.approve(address(stopLossHook), positionAmount);
 
         uint256 tokenIdAtPosition = stopLossHook.getTokenId(poolKey, tick, zeroForOne);
-        stopLossHook.placeOrder{value: 1 ether}(poolKey, tick, positionAmount, zeroForOne);
+        stopLossHook.placeOrder{value: 1 ether}(poolKey, tick, positionAmount, zeroForOne, false, 0);
         assertEq(positionAmount, stopLossHook.balanceOf(user1, tokenIdAtPosition));
         assertEq(stopLossHook.getGasBalancesAmount(user1), 1 ether);
         vm.stopPrank();
@@ -148,8 +148,8 @@ contract StopLossHookTest is HookTest, Deployers {
         //open two stopLoss positions, splitting the amount between them
         //if the price of the asset drops, sell more -- that is the idea here
         token1.approve(address(stopLossHook), amount);
-        int24 tickUpper = stopLossHook.placeOrder{value: 1 ether}(poolKey, tick, amount / 2, zeroForOne);
-        tickUpper = stopLossHook.placeOrder(poolKey, tick * 2, amount / 2, zeroForOne);
+        int24 tickUpper = stopLossHook.placeOrder{value: 1 ether}(poolKey, tick, amount / 2, zeroForOne, false, 0);
+        tickUpper = stopLossHook.placeOrder(poolKey, tick * 2, amount / 2, zeroForOne, false, 0);
 
         swap(poolKey, 1 ether, !zeroForOne, ZERO_BYTES);
 

@@ -12,52 +12,12 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+import "./HookGasAccounting.sol";
 
 import "forge-std/console.sol";
 import "forge-std/console2.sol";
 
-contract HookGasLedger {
-    uint256 immutable UNIT_PRICE; // in wei
-    struct GasTrack {
-        uint256 amount;
-        uint256 numberOfUnitsOutstanding;
-    }
-    mapping(address user => GasTrack) public gasBalances;
-
-    constructor(uint256 _unitPrice) {
-        UNIT_PRICE = _unitPrice;
-    }
-
-    function depositGasBalance() external payable {
-        gasBalances[msg.sender].amount += msg.value;
-    }
-
-    function withdrawGasBalance(uint256 amount) external {
-        uint256 currentBalance = gasBalances[msg.sender].amount;
-        require(currentBalance > amount, "not enough balance");
-        uint256 minimumBalanceToBeLeft = gasBalances[msg.sender].numberOfUnitsOutstanding * UNIT_PRICE;
-        require((currentBalance - amount) < minimumBalanceToBeLeft, "minimum balance with outstanding units not met");
-        gasBalances[msg.sender].amount -= amount;
-
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
-        require(success);
-    }
-
-    function getGasBalancesAmount(address user) external view returns (uint256) {
-        return gasBalances[user].amount;
-    }
-
-    function getGasPrice() public view returns (uint256) {
-        uint256 gasPrice;
-        assembly {
-            gasPrice := gasprice()
-        }
-        return gasPrice;
-    }
-
-}
-
-contract StopLossHook is BaseHook, HookGasLedger, ERC1155 {
+contract StopLossHook is BaseHook, HookGasAccounting, ERC1155 {
 
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
@@ -79,13 +39,15 @@ contract StopLossHook is BaseHook, HookGasLedger, ERC1155 {
         PoolKey poolKey;
         int24 tick;
         bool zeroForOne;
+        bool trailing;
+        uint256 triggerDelta;
     }
 
     constructor(
         IPoolManager _poolManager,
         string memory _uri,
         uint256 unitPrice
-    ) BaseHook(_poolManager) ERC1155(_uri) HookGasLedger(unitPrice) {}
+    ) BaseHook(_poolManager) ERC1155(_uri) HookGasAccounting(unitPrice) {}
 
 
     function getHooksCalls() public pure override returns (Hooks.Calls memory) {
@@ -129,61 +91,62 @@ contract StopLossHook is BaseHook, HookGasLedger, ERC1155 {
         (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
         int24 currentTickUpper = _getTickUpper(currentTick, key.tickSpacing);
 
-        //bool swapZeroForOne = !params.zeroForOne;
+        bool swapZeroForOne = !params.zeroForOne;
         int256 totalAmountAtTick;
         uint256 gasVar;
 
+        //price has moved into a lower range
         if (lastTickUpper > currentTickUpper) {
             //sell positions through the range the price just moved
-            //price has moved into a lower range
             for (int24 tickIndex = lastTickUpper;  currentTickUpper < tickIndex; ) {
-                totalAmountAtTick = stopLossPositions[key.toId()][tickIndex][!params.zeroForOne];
+                totalAmountAtTick = stopLossPositions[key.toId()][tickIndex][swapZeroForOne];
                 if (totalAmountAtTick > 0) {
-                    //console.log("filling an order at");
-                    //console2.log("upper tick index", tickIndex);
                     gasVar = gasleft();
-                    fillOrder(key, tickIndex, !params.zeroForOne, totalAmountAtTick);
+                    fillOrder(key, tickIndex, swapZeroForOne, totalAmountAtTick);
                     uint256 gasConsumed = (gasVar - gasleft()) * getGasPrice();
-                    //console.log("Gas Consumed: ", gasConsumed);
                     if (hookInitiator != address(0)) {
-                        gasBalances[positionOwners[getTokenId(key, tickIndex, !params.zeroForOne)][0]].amount -= gasConsumed;
-                        gasBalances[positionOwners[getTokenId(key, tickIndex, !params.zeroForOne)][0]].numberOfUnitsOutstanding --;
-                        gasBalances[hookInitiator].amount += gasConsumed;
+                        uint256 tokenId = getTokenId(key, tickIndex, swapZeroForOne);
+                        {
+                            for (uint256 ownerIndex; ownerIndex < positionOwners[tokenId].length; ownerIndex++) {
+                                address positionOwner = positionOwners[tokenId][ownerIndex];
+                                gasBalances[positionOwner].amount -= gasConsumed;
+                                gasBalances[positionOwner].numberOfUnitsOutstanding --;
+                                gasBalances[hookInitiator].amount += gasConsumed;
+                            }
+                        }
+                        delete positionOwners[tokenId] ;
                     }
-                    //tokenId = getTokenId(key, tickIndex, swapZeroForOne);
-                    // {
-                    //     for (uint256 ownerIndex; ownerIndex < positionOwners[tokenId].length; ownerIndex++) {
-                    //         address positionOwner = positionOwners[tokenId][ownerIndex];
-                    //         gasBalances[positionOwner] -= gasCost;
-                    //         console.log("gas cost: ", gasCost);
-                    //     }
-                    // }
-                    //delete positionOwners[tokenId] ;
                 }
                 tickIndex -= key.tickSpacing;
             }
         }
         else {
             //the price moved into a higher range
-            //in this case, see if the stop loss needs to be moved up
-            
-            console.log("tick moved up conditional");
-            // TBD
+            //in this case, see if the stop loss needs to be moved up            
+            // moveOrdersUp
+
         }
 
         return StopLossHook.afterSwap.selector;
+    }
 
+    function moveOrdersUp(PoolKey calldata key, int24 orderTick, bool zeroForOne, uint256 tickRangeToMove) public {
+        //where the order is currently at
+        uint256 tokenId = getTokenId(key, orderTick, zeroForOne);
+
+        //TBD
     }
 
     function placeOrder(
         PoolKey calldata key,
         int24 tick,
         uint256 amountIn,
-        bool zeroForOne
+        bool zeroForOne,
+        bool trailing,
+        uint256 triggerDelta
     )   external payable returns (int24) {
 
-        //TBD if there is already a position, then 
-        //the deposit is not needed, should be covered from before        
+        //TBD if user is adding to their position, a deposit is not needed
         if (msg.value == 0)
             require(gasBalances[msg.sender].amount > UNIT_PRICE, "no deposit");
         else
@@ -200,7 +163,7 @@ contract StopLossHook is BaseHook, HookGasLedger, ERC1155 {
 
         if (!tokenIdExists[tokenId]) {
             tokenIdExists[tokenId] = true;
-            tokenIdData[tokenId] = TokenData(key, tickUpper, zeroForOne);
+            tokenIdData[tokenId] = TokenData(key, tickUpper, zeroForOne, trailing, triggerDelta);
         }
 
         _mint(msg.sender, tokenId, amountIn, "");
@@ -266,8 +229,7 @@ contract StopLossHook is BaseHook, HookGasLedger, ERC1155 {
     //the post swap settlement is the same
     //this executes the trailing stop loss order, and sells the positions
     //this will also then directly decrease the price / change the price
-    //meaning we have to monitor the price...is that some kind of recursion?
-    //centralized exchanges would also need to deal with some flavor of this
+    //subsequently triggering more stoplosses...called a "pop stop run"
     function handleSwap(
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params

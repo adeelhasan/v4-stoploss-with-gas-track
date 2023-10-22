@@ -33,7 +33,11 @@ contract StopLossHook is BaseHook, ERC1155 {
     mapping(uint256 tokenId => TokenData) public tokenIdData;
 
     uint256 constant MIN_PREPAY_BALANCE = 100; // in wei
-    mapping(address user => uint256) public gasBalances;
+    struct GasTrack {
+        uint256 amount;
+        uint256 numberOfPositions;
+    }
+    mapping(address user => GasTrack) public gasBalances;
     mapping(uint256 tokenId => address[]) public positionOwners;
 
     struct TokenData {
@@ -106,8 +110,9 @@ contract StopLossHook is BaseHook, ERC1155 {
                     uint256 gasConsumed = (gasVar - gasleft()) * getGasPrice();
                     //console.log("Gas Consumed: ", gasConsumed);
                     if (hookInitiator != address(0)) {
-                        gasBalances[positionOwners[getTokenId(key, tickIndex, !params.zeroForOne)][0]] -= gasConsumed;
-                        gasBalances[hookInitiator] += gasConsumed;
+                        gasBalances[positionOwners[getTokenId(key, tickIndex, !params.zeroForOne)][0]].amount -= gasConsumed;
+                        gasBalances[positionOwners[getTokenId(key, tickIndex, !params.zeroForOne)][0]].numberOfPositions --;
+                        gasBalances[hookInitiator].amount += gasConsumed;
                     }
                     //tokenId = getTokenId(key, tickIndex, swapZeroForOne);
                     // {
@@ -144,11 +149,12 @@ contract StopLossHook is BaseHook, ERC1155 {
         //TBD if there is already a position, then 
         //the deposit is not needed, should be covered from before        
         if (msg.value == 0)
-            require(gasBalances[msg.sender] > MIN_PREPAY_BALANCE, "no deposit");
+            require(gasBalances[msg.sender].amount > MIN_PREPAY_BALANCE, "no deposit");
         else
         {
             require(msg.value > MIN_PREPAY_BALANCE, "no deposit and no prepayment sent");
-            gasBalances[msg.sender] += msg.value;
+            gasBalances[msg.sender].amount += msg.value;
+            gasBalances[msg.sender].numberOfPositions ++;
         }
         
         int24 tickUpper = _getTickUpper(tick, key.tickSpacing);
@@ -303,14 +309,20 @@ contract StopLossHook is BaseHook, ERC1155 {
     }
 
     function depositGasBalance() external payable {
-        gasBalances[msg.sender] += msg.value;
+        gasBalances[msg.sender].amount += msg.value;
     }
 
     function withdrawGasBalance(uint256 amount) external {
-        uint256 currentBalance = gasBalances[msg.sender];
+        uint256 currentBalance = gasBalances[msg.sender].amount;
         require(currentBalance > amount, "not enough balance");
-        gasBalances[msg.sender] -= amount;
+        uint256 minimumBalanceToBeLeft = gasBalances[msg.sender].numberOfPositions * MIN_PREPAY_BALANCE;
+        require((currentBalance - amount) < minimumBalanceToBeLeft, "minimum balance with open positions not met");
+        gasBalances[msg.sender].amount -= amount;
 
+    }
+
+    function getGasBalancesAmount(address user) external view returns (uint256) {
+        return gasBalances[user].amount;
     }
 
     function getGasPrice() public view returns (uint256) {

@@ -16,6 +16,10 @@ Eth deposits can be added or removed at any time, however the condition is that 
 ### Main Test
 
 
+### Future Work
+- trailing stop loss -- the stop position could move up into higher tick ranges and maintain a tick distance of a threshold
+- generalized gas accounting -- the fact that all hooks will be paid for by a transaction executor will lead to instances where this execution-tax will be a disincentive to participate. There is room to make the hook funding more generalized so that it can be used as a design pattern. Or that there are other ways of accounting for this, eg. through signatures
+
 
 ### Acknowledgements
 1. based on the [v4-template](https://github.com/saucepoint/v4-template) by @saucepoint
